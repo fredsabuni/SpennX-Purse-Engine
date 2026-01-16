@@ -139,3 +139,21 @@ class TransactionOverview(BaseModel):
     total_revenue_usd: str  # Changed to string for formatted output
     avg_transaction_size: str  # Changed to string for formatted output
     status_breakdown: Dict[str, Dict[str, Any]]  # {"success": {"count": 100, "volume_usd": "1,000.00", "revenue_usd": "50.00", "percentage": 50.0}}
+
+class DailyTrendData(BaseModel):
+    date: str  # YYYY-MM-DD format
+    transaction_count: int
+    success_count: int
+    failed_count: int
+    pending_count: int
+    total_volume_usd: str  # Formatted currency
+    total_revenue_usd: str  # Formatted currency
+    avg_transaction_size_usd: str  # Formatted currency
+    success_rate: float
+
+class TransactionTrend(BaseModel):
+    start_date: str
+    end_date: str
+    total_days: int
+    daily_data: List[DailyTrendData]
+    summary: Dict[str, Any]  # Overall summary stats

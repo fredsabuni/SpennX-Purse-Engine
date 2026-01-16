@@ -12,7 +12,7 @@ from app.schemas import (
     TransactionsLiveView, PeriodStats, TransactionPulse,
     NetIncomeStats, CountryCurrencyVolume, TimeInterval,
     TransactionStatusBreakdown, CurrencyVolumeBreakdown,
-    TransactionOverview
+    TransactionOverview, DailyTrendData, TransactionTrend
 )
 from app.utils import get_date_range, parse_datetime
 from app.currency_rates import convert_to_usd
@@ -887,6 +887,234 @@ def get_transactions_by_status(
         )
         for t in transactions
     ]
+
+@app.get("/api/analytics/daily-trend", response_model=TransactionTrend)
+def get_daily_transaction_trend(
+    start_date: Optional[str] = Query(None, description="Start date (YYYY-MM-DD or YYYY-MM-DD HH:MM:SS)"),
+    end_date: Optional[str] = Query(None, description="End date (YYYY-MM-DD or YYYY-MM-DD HH:MM:SS)"),
+    interval: Optional[TimeInterval] = None,
+    db: Session = Depends(get_db)
+):
+    """
+    Get daily transaction trends with all amounts converted to USD.
+    
+    Returns daily breakdown of:
+    - Transaction counts by status
+    - Total volume in USD
+    - Total revenue in USD
+    - Average transaction size in USD
+    - Success rate
+    
+    Perfect for line charts showing:
+    - Number of successful transactions per day
+    - Transaction volume in USD per day
+    
+    Filters:
+    - Custom date range (start_date & end_date)
+    - Predefined interval (today, current_week, current_month, etc.)
+    - If no filter provided, returns from 2025-07-18 to today
+    
+    Example:
+    /api/analytics/daily-trend?start_date=2024-01-01&end_date=2024-01-31
+    /api/analytics/daily-trend?interval=current_month
+    /api/analytics/daily-trend  (defaults to 2025-07-18 to today)
+    """
+    now = datetime.now()
+    
+    # Determine date range
+    if start_date or end_date:
+        try:
+            if start_date:
+                start_dt = parse_datetime(start_date)
+            else:
+                # Default start date if only end_date provided
+                start_dt = datetime(2025, 7, 18, 0, 0, 0)
+            
+            if end_date:
+                end_dt = parse_datetime(end_date)
+                if end_dt.hour == 0 and end_dt.minute == 0 and end_dt.second == 0:
+                    end_dt = end_dt.replace(hour=23, minute=59, second=59)
+            else:
+                end_dt = now
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+    elif interval:
+        start_dt, end_dt = get_date_range(interval.value)
+    else:
+        # Default: from 2025-07-18 to today
+        start_dt = datetime(2025, 7, 18, 0, 0, 0)
+        end_dt = now
+    
+    # Validate date range
+    if start_dt > end_dt:
+        raise HTTPException(
+            status_code=400,
+            detail="start_date must be before or equal to end_date"
+        )
+    
+    # Use database aggregation for counts, but we need individual records for currency conversion
+    # Group by date and status for counts (efficient)
+    from sqlalchemy import case
+    
+    daily_counts = db.query(
+        func.date(Transaction.created_at).label('date'),
+        Transaction.status,
+        func.count(Transaction.id).label('count')
+    ).filter(
+        and_(
+            Transaction.created_at >= start_dt,
+            Transaction.created_at <= end_dt
+        )
+    ).group_by(
+        func.date(Transaction.created_at),
+        Transaction.status
+    ).all()
+    
+    # For successful transactions, we need to fetch and convert to USD
+    # Only fetch successful transactions to minimize data transfer
+    success_transactions = db.query(
+        func.date(Transaction.created_at).label('date'),
+        Transaction.human_readable_amount,
+        Transaction.human_readable_charge,
+        Transaction.currency,
+        Transaction.recipient
+    ).filter(
+        and_(
+            Transaction.created_at >= start_dt,
+            Transaction.created_at <= end_dt,
+            Transaction.status == "success"
+        )
+    ).all()
+    
+    # Group results by date
+    daily_data_dict = {}
+    
+    # First, populate counts from aggregated query
+    for row in daily_counts:
+        date_str = row.date.isoformat()
+        
+        if date_str not in daily_data_dict:
+            daily_data_dict[date_str] = {
+                "transaction_count": 0,
+                "success_count": 0,
+                "failed_count": 0,
+                "pending_count": 0,
+                "total_volume_usd": Decimal(0),
+                "total_revenue_usd": Decimal(0)
+            }
+        
+        # Aggregate counts by status
+        daily_data_dict[date_str]["transaction_count"] += row.count
+        
+        if row.status == "success":
+            daily_data_dict[date_str]["success_count"] += row.count
+        elif row.status in ["failed", "declined", "reversed"]:
+            daily_data_dict[date_str]["failed_count"] += row.count
+        elif row.status == "pending":
+            daily_data_dict[date_str]["pending_count"] += row.count
+    
+    # Now convert and sum amounts for successful transactions
+    for row in success_transactions:
+        date_str = row.date.isoformat()
+        
+        # Ensure date exists in dict (should already exist from counts)
+        if date_str not in daily_data_dict:
+            daily_data_dict[date_str] = {
+                "transaction_count": 0,
+                "success_count": 0,
+                "failed_count": 0,
+                "pending_count": 0,
+                "total_volume_usd": Decimal(0),
+                "total_revenue_usd": Decimal(0)
+            }
+        
+        amount = row.human_readable_amount or Decimal(0)
+        charge = row.human_readable_charge or Decimal(0)
+        currency = row.currency or "USD"
+        
+        # Get rate from recipient JSON
+        rate_from_json = None
+        if row.recipient and isinstance(row.recipient, dict) and 'rate' in row.recipient:
+            try:
+                rate_from_json = Decimal(str(row.recipient['rate'])) if row.recipient['rate'] else None
+            except:
+                rate_from_json = None
+        
+        # Convert to USD
+        amount_usd = convert_to_usd(amount, currency, rate_from_json)
+        charge_usd = convert_to_usd(charge, currency, rate_from_json)
+        
+        daily_data_dict[date_str]["total_volume_usd"] += amount_usd
+        daily_data_dict[date_str]["total_revenue_usd"] += charge_usd
+    
+    # Build daily data list
+    daily_data = []
+    total_transactions = 0
+    total_success = 0
+    total_volume_usd = Decimal(0)
+    total_revenue_usd = Decimal(0)
+    
+    # Sort by date
+    for date_str in sorted(daily_data_dict.keys()):
+        data = daily_data_dict[date_str]
+        
+        # Calculate averages
+        avg_transaction_size = (
+            data["total_volume_usd"] / data["success_count"] 
+            if data["success_count"] > 0 
+            else Decimal(0)
+        )
+        
+        # Calculate success rate
+        success_rate = (
+            data["success_count"] / data["transaction_count"] * 100 
+            if data["transaction_count"] > 0 
+            else 0.0
+        )
+        
+        daily_data.append(DailyTrendData(
+            date=date_str,
+            transaction_count=data["transaction_count"],
+            success_count=data["success_count"],
+            failed_count=data["failed_count"],
+            pending_count=data["pending_count"],
+            total_volume_usd=format_currency(data["total_volume_usd"]),
+            total_revenue_usd=format_currency(data["total_revenue_usd"]),
+            avg_transaction_size_usd=format_currency(avg_transaction_size),
+            success_rate=round(success_rate, 2)
+        ))
+        
+        # Accumulate totals for summary
+        total_transactions += data["transaction_count"]
+        total_success += data["success_count"]
+        total_volume_usd += data["total_volume_usd"]
+        total_revenue_usd += data["total_revenue_usd"]
+    
+    # Calculate summary stats
+    total_days = len(daily_data)
+    overall_success_rate = (total_success / total_transactions * 100) if total_transactions > 0 else 0.0
+    avg_daily_transactions = total_transactions / total_days if total_days > 0 else 0
+    avg_daily_volume = total_volume_usd / total_days if total_days > 0 else Decimal(0)
+    avg_transaction_size = total_volume_usd / total_success if total_success > 0 else Decimal(0)
+    
+    summary = {
+        "total_transactions": total_transactions,
+        "total_success": total_success,
+        "overall_success_rate": round(overall_success_rate, 2),
+        "total_volume_usd": format_currency(total_volume_usd),
+        "total_revenue_usd": format_currency(total_revenue_usd),
+        "avg_daily_transactions": round(avg_daily_transactions, 2),
+        "avg_daily_volume_usd": format_currency(avg_daily_volume),
+        "avg_transaction_size_usd": format_currency(avg_transaction_size)
+    }
+    
+    return TransactionTrend(
+        start_date=start_dt.date().isoformat(),
+        end_date=end_dt.date().isoformat(),
+        total_days=total_days,
+        daily_data=daily_data,
+        summary=summary
+    )
 
 if __name__ == "__main__":
     import uvicorn
