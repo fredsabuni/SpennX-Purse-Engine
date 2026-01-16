@@ -1,0 +1,300 @@
+{
+	"info": {
+		"_postman_id": "spennx-dashboard-api",
+		"name": "SpennX Live Pulse Dashboard API",
+		"description": "Complete API collection for SpennX Live Pulse Dashboard with all analytics endpoints",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+	},
+	"item": [
+		{
+			"name": "Health Check",
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "{{base_url}}/",
+					"host": ["{{base_url}}"],
+					"path": [""]
+				},
+				"description": "Check if API is running"
+			},
+			"response": []
+		},
+		{
+			"name": "Dashboard Stats",
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "{{base_url}}/api/dashboard/stats",
+					"host": ["{{base_url}}"],
+					"path": ["api", "dashboard", "stats"]
+				},
+				"description": "Get overall dashboard statistics including total transactions, volume, and status counts"
+			},
+			"response": []
+		},
+		{
+			"name": "Transactions Live View",
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "{{base_url}}/api/live-view",
+					"host": ["{{base_url}}"],
+					"path": ["api", "live-view"]
+				},
+				"description": "Get transactions structured by time intervals:\n- Today\n- Previous Day\n- Current Week\n- Previous Week\n- Current Month\n- Previous Month\n- Year to Date\n\nIncludes revenue, net revenue, averages, and error rates for each period."
+			},
+			"response": []
+		},
+		{
+			"name": "Transaction Pulse (Real-time)",
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "{{base_url}}/api/transaction-pulse",
+					"host": ["{{base_url}}"],
+					"path": ["api", "transaction-pulse"]
+				},
+				"description": "Get real-time transaction pulse metrics:\n- Transactions per minute/hour/day\n- Transaction volume (USD)\n- Average transaction size\n- Error rate\n- Active users (DAU/WAU/MAU)\n- New registered users per day"
+			},
+			"response": []
+		},
+		{
+			"name": "Net Income Statistics",
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "{{base_url}}/api/net-income",
+					"host": ["{{base_url}}"],
+					"path": ["api", "net-income"]
+				},
+				"description": "Get net income statistics:\n- Income per minute/hour/day\n- Total value moved (USD)\n- Average amount sent\n- Transaction error rate\n- Top 5 countries by volume\n- Top 5 currencies by volume\n- Accumulated revenue YTD"
+			},
+			"response": []
+		},
+		{
+			"name": "Get All Transactions",
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "{{base_url}}/api/transactions?skip=0&limit=50",
+					"host": ["{{base_url}}"],
+					"path": ["api", "transactions"],
+					"query": [
+						{
+							"key": "skip",
+							"value": "0",
+							"description": "Number of records to skip (pagination)"
+						},
+						{
+							"key": "limit",
+							"value": "50",
+							"description": "Number of records to return (max 100)"
+						}
+					]
+				},
+				"description": "Get paginated list of all transactions"
+			},
+			"response": []
+		},
+		{
+			"name": "Get Transactions by Status",
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "{{base_url}}/api/transactions?status=completed&skip=0&limit=50",
+					"host": ["{{base_url}}"],
+					"path": ["api", "transactions"],
+					"query": [
+						{
+							"key": "status",
+							"value": "completed",
+							"description": "Filter by status: pending, completed, failed, declined"
+						},
+						{
+							"key": "skip",
+							"value": "0"
+						},
+						{
+							"key": "limit",
+							"value": "50"
+						}
+					]
+				},
+				"description": "Get transactions filtered by status"
+			},
+			"response": []
+		},
+		{
+			"name": "Get Transactions by Time Interval",
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "{{base_url}}/api/transactions?interval=today&skip=0&limit=50",
+					"host": ["{{base_url}}"],
+					"path": ["api", "transactions"],
+					"query": [
+						{
+							"key": "interval",
+							"value": "today",
+							"description": "Time interval: today, previous_day, current_week, previous_week, current_month, previous_month, year_to_date"
+						},
+						{
+							"key": "skip",
+							"value": "0"
+						},
+						{
+							"key": "limit",
+							"value": "50"
+						}
+					]
+				},
+				"description": "Get transactions filtered by time interval"
+			},
+			"response": []
+		},
+		{
+			"name": "Get Transactions - Today & Completed",
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "{{base_url}}/api/transactions?interval=today&status=completed&skip=0&limit=100",
+					"host": ["{{base_url}}"],
+					"path": ["api", "transactions"],
+					"query": [
+						{
+							"key": "interval",
+							"value": "today"
+						},
+						{
+							"key": "status",
+							"value": "completed"
+						},
+						{
+							"key": "skip",
+							"value": "0"
+						},
+						{
+							"key": "limit",
+							"value": "100"
+						}
+					]
+				},
+				"description": "Get today's completed transactions (combined filters)"
+			},
+			"response": []
+		},
+		{
+			"name": "Get Transaction by ID",
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "{{base_url}}/api/transactions/:transaction_id",
+					"host": ["{{base_url}}"],
+					"path": ["api", "transactions", ":transaction_id"],
+					"variable": [
+						{
+							"key": "transaction_id",
+							"value": "your-transaction-id-here",
+							"description": "The transaction ID"
+						}
+					]
+				},
+				"description": "Get a specific transaction by ID with full recipient details"
+			},
+			"response": []
+		},
+		{
+			"name": "Get Pending Transactions",
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "{{base_url}}/api/transactions/status/pending?skip=0&limit=50",
+					"host": ["{{base_url}}"],
+					"path": ["api", "transactions", "status", "pending"],
+					"query": [
+						{
+							"key": "skip",
+							"value": "0"
+						},
+						{
+							"key": "limit",
+							"value": "50"
+						}
+					]
+				},
+				"description": "Get all pending transactions"
+			},
+			"response": []
+		},
+		{
+			"name": "Get Failed Transactions",
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "{{base_url}}/api/transactions/status/failed?skip=0&limit=50",
+					"host": ["{{base_url}}"],
+					"path": ["api", "transactions", "status", "failed"],
+					"query": [
+						{
+							"key": "skip",
+							"value": "0"
+						},
+						{
+							"key": "limit",
+							"value": "50"
+						}
+					]
+				},
+				"description": "Get all failed transactions"
+			},
+			"response": []
+		},
+		{
+			"name": "API Documentation (Swagger)",
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "{{base_url}}/docs",
+					"host": ["{{base_url}}"],
+					"path": ["docs"]
+				},
+				"description": "Open interactive API documentation (Swagger UI)"
+			},
+			"response": []
+		},
+		{
+			"name": "API Documentation (ReDoc)",
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "{{base_url}}/redoc",
+					"host": ["{{base_url}}"],
+					"path": ["redoc"]
+				},
+				"description": "Open alternative API documentation (ReDoc)"
+			},
+			"response": []
+		}
+	],
+	"variable": [
+		{
+			"key": "base_url",
+			"value": "http://localhost:8000",
+			"type": "string"
+		}
+	]
+}

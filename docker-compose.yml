@@ -1,0 +1,52 @@
+version: '3.8'
+
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: spennx-api
+    ports:
+      - "${API_PORT:-8000}:8000"
+    environment:
+      - DATABASE_URL=${DATABASE_URL}
+      - API_HOST=${API_HOST:-0.0.0.0}
+      - API_PORT=${API_PORT:-8000}
+    env_file:
+      - .env
+    volumes:
+      - ./app:/app/app
+    restart: unless-stopped
+    depends_on:
+      - db
+    networks:
+      - spennx-network
+
+  db:
+    image: mysql:8.0
+    container_name: spennx-db
+    environment:
+      - MYSQL_ROOT_PASSWORD=${MYSQL_ROOT_PASSWORD:-rootpassword}
+      - MYSQL_DATABASE=${MYSQL_DATABASE:-spennx_db}
+      - MYSQL_USER=${MYSQL_USER:-spennx_user}
+      - MYSQL_PASSWORD=${MYSQL_PASSWORD:-spennx_password}
+    ports:
+      - "${MYSQL_PORT:-3306}:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+    restart: unless-stopped
+    networks:
+      - spennx-network
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  mysql_data:
+    driver: local
+
+networks:
+  spennx-network:
+    driver: bridge
