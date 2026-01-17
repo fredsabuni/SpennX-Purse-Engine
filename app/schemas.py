@@ -157,3 +157,30 @@ class TransactionTrend(BaseModel):
     total_days: int
     daily_data: List[DailyTrendData]
     summary: Dict[str, Any]  # Overall summary stats
+
+class TodayTransactionItem(BaseModel):
+    id: str
+    time: str  # HH:MM:SS format
+    created_at: datetime
+    status: str
+    amount: str  # Original amount formatted
+    currency: str
+    amount_usd: str  # Converted to USD
+    charge: str  # Original charge formatted
+    charge_usd: str  # Charge in USD
+    type: str
+    description: Optional[str]
+    from_wallet: Optional[str]
+    to_wallet: Optional[str]
+    recipient_name: Optional[str]
+    recipient_country: Optional[str]
+
+class TodayTransactionsSummary(BaseModel):
+    date: str
+    total_count: int
+    success_count: int
+    pending_count: int
+    failed_count: int
+    total_volume_usd: str
+    total_revenue_usd: str
+    transactions: List[TodayTransactionItem]

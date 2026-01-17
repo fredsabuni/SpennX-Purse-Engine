@@ -12,7 +12,8 @@ from app.schemas import (
     TransactionsLiveView, PeriodStats, TransactionPulse,
     NetIncomeStats, CountryCurrencyVolume, TimeInterval,
     TransactionStatusBreakdown, CurrencyVolumeBreakdown,
-    TransactionOverview, DailyTrendData, TransactionTrend
+    TransactionOverview, DailyTrendData, TransactionTrend,
+    TodayTransactionItem, TodayTransactionsSummary
 )
 from app.utils import get_date_range, parse_datetime
 from app.currency_rates import convert_to_usd
@@ -462,6 +463,131 @@ def get_transactions(
         )
         for t in transactions
     ]
+
+@app.get("/api/transactions/today", response_model=TodayTransactionsSummary)
+def get_today_transactions(
+    status: Optional[str] = Query(None, description="Filter by status (success, pending, failed, etc.)"),
+    limit: int = Query(100, ge=1, le=500, description="Maximum number of transactions to return"),
+    db: Session = Depends(get_db)
+):
+    """
+    Get today's transactions with USD conversion for finance team monitoring.
+    
+    Returns:
+    - All transactions from today with specific timestamps
+    - Amounts converted to USD
+    - Summary statistics (counts by status, total volume, revenue)
+    - Sorted by most recent first
+    
+    Perfect for:
+    - Real-time finance team monitoring
+    - Today's transaction activity dashboard
+    - Live transaction feed with USD values
+    
+    Filters:
+    - status: Filter by specific status (optional)
+    - limit: Number of transactions to return (default 100, max 500)
+    
+    Example:
+    /api/transactions/today
+    /api/transactions/today?status=success
+    /api/transactions/today?limit=200
+    """
+    now = datetime.now()
+    today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    
+    # Base query for today
+    base_query = db.query(Transaction).filter(
+        Transaction.created_at >= today_start
+    )
+    
+    # Apply status filter if provided
+    if status:
+        base_query = base_query.filter(Transaction.status == status)
+    
+    # Get transactions ordered by most recent first
+    transactions = base_query.order_by(desc(Transaction.created_at)).limit(limit).all()
+    
+    # Calculate summary stats
+    total_count = 0
+    success_count = 0
+    pending_count = 0
+    failed_count = 0
+    total_volume_usd = Decimal(0)
+    total_revenue_usd = Decimal(0)
+    
+    # Build transaction list with USD conversion
+    transaction_items = []
+    
+    for txn in transactions:
+        # Get amounts
+        amount = txn.human_readable_amount or Decimal(0)
+        charge = txn.human_readable_charge or Decimal(0)
+        currency = txn.currency or "USD"
+        
+        # Get rate from recipient JSON
+        rate_from_json = None
+        if txn.recipient and isinstance(txn.recipient, dict):
+            if 'rate' in txn.recipient:
+                try:
+                    rate_from_json = Decimal(str(txn.recipient['rate'])) if txn.recipient['rate'] else None
+                except:
+                    rate_from_json = None
+        
+        # Convert to USD
+        amount_usd = convert_to_usd(amount, currency, rate_from_json)
+        charge_usd = convert_to_usd(charge, currency, rate_from_json)
+        
+        # Get recipient info
+        recipient_name = None
+        recipient_country = None
+        if txn.recipient and isinstance(txn.recipient, dict):
+            first_name = txn.recipient.get('first_name', '')
+            last_name = txn.recipient.get('last_name', '')
+            if first_name or last_name:
+                recipient_name = f"{first_name} {last_name}".strip()
+            recipient_country = txn.recipient.get('country')
+        
+        # Count by status
+        total_count += 1
+        if txn.status == "success":
+            success_count += 1
+            total_volume_usd += amount_usd
+            total_revenue_usd += charge_usd
+        elif txn.status == "pending":
+            pending_count += 1
+        elif txn.status in ["failed", "declined", "reversed"]:
+            failed_count += 1
+        
+        # Build transaction item
+        transaction_items.append(TodayTransactionItem(
+            id=txn.id,
+            time=txn.created_at.strftime("%H:%M:%S"),
+            created_at=txn.created_at,
+            status=txn.status,
+            amount=format_currency(amount),
+            currency=currency,
+            amount_usd=format_currency(amount_usd),
+            charge=format_currency(charge),
+            charge_usd=format_currency(charge_usd),
+            type=txn.type,
+            description=txn.description,
+            from_wallet=txn.from_wallet,
+            to_wallet=txn.to_wallet,
+            recipient_name=recipient_name,
+            recipient_country=recipient_country
+        ))
+    
+    return TodayTransactionsSummary(
+        date=today_start.date().isoformat(),
+        total_count=total_count,
+        success_count=success_count,
+        pending_count=pending_count,
+        failed_count=failed_count,
+        total_volume_usd=format_currency(total_volume_usd),
+        total_revenue_usd=format_currency(total_revenue_usd),
+        transactions=transaction_items
+    )
 
 @app.get("/api/transactions/{transaction_id}", response_model=TransactionResponse)
 def get_transaction(transaction_id: str, db: Session = Depends(get_db)):
