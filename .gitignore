@@ -15,3 +15,7 @@ token.pickle
 
 # Gmail API credentials
 credentials.json
+
+# Server environment files
+.env.server.example
+.env.server

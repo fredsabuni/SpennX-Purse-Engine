@@ -7,9 +7,10 @@ Handles Gmail API authentication and email sending using OAuth2 credentials.
 import os
 import base64
 import pickle
+import json
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
-from typing import List
+from typing import List, Optional
 from pathlib import Path
 
 from google.auth.transport.requests import Request
@@ -31,13 +32,40 @@ def get_gmail_service():
     """
     Get authenticated Gmail API service.
     
+    Priority order for authentication:
+    1. Environment variables (for server deployment)
+    2. token.pickle file (for local development)
+    3. credentials.json + OAuth flow (for initial setup)
+    
+    Environment variables needed for server deployment:
+    - GMAIL_CLIENT_ID: OAuth2 client ID
+    - GMAIL_CLIENT_SECRET: OAuth2 client secret  
+    - GMAIL_REFRESH_TOKEN: OAuth2 refresh token
+    
     Returns:
         Gmail API service object
     """
     creds = None
     
-    # Check if token.pickle exists (stores user's access and refresh tokens)
-    if os.path.exists(TOKEN_FILE):
+    # Try environment variables first (for server deployment)
+    if all(os.getenv(var) for var in ['GMAIL_CLIENT_ID', 'GMAIL_CLIENT_SECRET', 'GMAIL_REFRESH_TOKEN']):
+        creds = Credentials(
+            token=None,  # Will be refreshed
+            refresh_token=os.getenv('GMAIL_REFRESH_TOKEN'),
+            token_uri='https://oauth2.googleapis.com/token',
+            client_id=os.getenv('GMAIL_CLIENT_ID'),
+            client_secret=os.getenv('GMAIL_CLIENT_SECRET'),
+            scopes=SCOPES
+        )
+        # Refresh the token
+        try:
+            creds.refresh(Request())
+        except Exception as e:
+            print(f"Error refreshing token from environment variables: {e}")
+            raise
+    
+    # Fallback to token.pickle (for local development)
+    elif os.path.exists(TOKEN_FILE):
         with open(TOKEN_FILE, 'rb') as token:
             creds = pickle.load(token)
     
@@ -56,17 +84,18 @@ def get_gmail_service():
         if not creds:
             if not os.path.exists(CREDENTIALS_FILE):
                 raise FileNotFoundError(
-                    f"Credentials file '{CREDENTIALS_FILE}' not found. "
-                    "Please ensure credentials.json is in the project root."
+                    f"Authentication failed. Either:\n"
+                    f"1. Set environment variables: GMAIL_CLIENT_ID, GMAIL_CLIENT_SECRET, GMAIL_REFRESH_TOKEN\n"
+                    f"2. Or provide credentials file '{CREDENTIALS_FILE}' for OAuth flow"
                 )
             
             flow = InstalledAppFlow.from_client_secrets_file(
                 CREDENTIALS_FILE, SCOPES)
             creds = flow.run_local_server(port=0)
-        
-        # Save the credentials for the next run
-        with open(TOKEN_FILE, 'wb') as token:
-            pickle.dump(creds, token)
+            
+            # Save the credentials for the next run (only for local development)
+            with open(TOKEN_FILE, 'wb') as token:
+                pickle.dump(creds, token)
     
     try:
         service = build('gmail', 'v1', credentials=creds)
