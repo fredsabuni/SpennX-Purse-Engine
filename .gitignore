@@ -12,3 +12,6 @@ venv/
 
 # Gmail API token (contains authentication credentials)
 token.pickle
+
+# Gmail API credentials
+credentials.json
