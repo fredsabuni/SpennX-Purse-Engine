@@ -9,3 +9,6 @@ venv/
 .DS_Store
 *.db
 *.sqlite3
+
+# Gmail API token (contains authentication credentials)
+token.pickle

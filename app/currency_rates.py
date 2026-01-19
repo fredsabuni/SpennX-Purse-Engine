@@ -14,6 +14,9 @@ CURRENCY_RATES: Dict[str, Decimal] = {
     "RWF": Decimal("1420.8214931542"),
     "UGX": Decimal("3457.7905067933"),
     "NOK": Decimal("9.7708691701344"),
+    "AED": Decimal("3.6725"),
+    "PHP": Decimal("59.44767954"),
+    "CAD": Decimal("1.3452372791339"),
 }
 
 def get_usd_rate(currency_code: str) -> Decimal:

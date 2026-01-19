@@ -13,11 +13,14 @@ from app.schemas import (
     NetIncomeStats, CountryCurrencyVolume, TimeInterval,
     TransactionStatusBreakdown, CurrencyVolumeBreakdown,
     TransactionOverview, DailyTrendData, TransactionTrend,
-    TodayTransactionItem, TodayTransactionsSummary
+    TodayTransactionItem, TodayTransactionsSummary,
+    WeeklyPerformanceReport, SendWeeklyEmailRequest
 )
 from app.utils import get_date_range, parse_datetime
 from app.currency_rates import convert_to_usd
 from app.formatters import format_currency, format_percentage
+from app.reports import generate_weekly_performance_report
+from app.email_service import generate_html_email, generate_plain_text_email, send_email
 
 app = FastAPI(title="SpennX Live Pulse Dashboard API", version="2.0")
 
@@ -1241,6 +1244,123 @@ def get_daily_transaction_trend(
         daily_data=daily_data,
         summary=summary
     )
+
+@app.get("/api/reports/weekly-performance", response_model=WeeklyPerformanceReport)
+def get_weekly_performance_report(
+    week_start_date: str = Query(..., description="Week start date (YYYY-MM-DD, should be a Monday)"),
+    db: Session = Depends(get_db)
+):
+    """
+    Get weekly transaction performance report.
+    
+    Returns comprehensive metrics for the specified week including:
+    - Transaction counts by status
+    - Volume and revenue metrics
+    - Currency breakdown (top 5)
+    - Week-over-week comparison with previous week
+    
+    Args:
+        week_start_date: Start date of the week (YYYY-MM-DD format, should be a Monday)
+    
+    Example:
+        /api/reports/weekly-performance?week_start_date=2026-01-13
+    
+    Note: This endpoint is designed to be called by n8n for automated weekly email reports.
+    """
+    try:
+        # Validate date format
+        datetime.strptime(week_start_date, "%Y-%m-%d")
+    except ValueError:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid date format. Use YYYY-MM-DD format (e.g., 2026-01-13)"
+        )
+    
+    # Generate report
+    report_data = generate_weekly_performance_report(db, week_start_date)
+    
+    return WeeklyPerformanceReport(**report_data)
+
+@app.post("/api/reports/weekly-email")
+def send_weekly_performance_email(
+    request: SendWeeklyEmailRequest,
+    db: Session = Depends(get_db)
+):
+    """
+    Generate and send weekly performance email report.
+    
+    This endpoint:
+    1. Generates the weekly performance report data
+    2. Creates HTML and plain text email content
+    3. Sends the email to specified recipients
+    
+    Request body:
+    {
+        "week_start_date": "2026-01-13",
+        "recipients": ["finance@spennx.com", "management@spennx.com"]
+    }
+    
+    Note: This endpoint is designed to be called by n8n automation.
+    Email credentials should be configured in environment variables.
+    
+    Returns:
+        Success message with report summary
+    """
+    try:
+        # Validate date format
+        datetime.strptime(request.week_start_date, "%Y-%m-%d")
+    except ValueError:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid date format. Use YYYY-MM-DD format (e.g., 2026-01-13)"
+        )
+    
+    # Generate report data
+    report_data = generate_weekly_performance_report(db, request.week_start_date)
+    
+    # Format dates for subject
+    start_date = datetime.strptime(report_data["period"]["start_date"], "%Y-%m-%d").strftime("%b %d")
+    end_date = datetime.strptime(report_data["period"]["end_date"], "%Y-%m-%d").strftime("%b %d, %Y")
+    
+    # Create email subject
+    subject = f"Weekly Transaction Performance Report - {start_date} to {end_date}"
+    
+    # Generate email content
+    html_content = generate_html_email(report_data)
+    plain_text_content = generate_plain_text_email(report_data)
+    
+    # Email sending using Gmail API
+    from os import getenv
+    sender_email = getenv("WEEKLY_REPORT_SENDER_EMAIL", None)
+    
+    # Send email using Gmail API (uses credentials.json and token.pickle)
+    success = send_email(
+        recipients=request.recipients,
+        subject=subject,
+        html_content=html_content,
+        plain_text_content=plain_text_content,
+        sender_email=sender_email
+    )
+    
+    if not success:
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to send email. Check server logs for details. Ensure credentials.json is present and you've authenticated with Gmail API."
+        )
+    
+    return {
+        "success": True,
+        "message": "Weekly performance email sent successfully via Gmail API",
+        "subject": subject,
+        "recipients": request.recipients,
+        "report_summary": {
+            "period": report_data["period"],
+            "total_transactions": report_data["current_week"]["total_transactions"],
+            "total_volume_usd": report_data["current_week"]["total_volume_usd"],
+            "total_revenue_usd": report_data["current_week"]["total_revenue_usd"],
+            "success_rate": report_data["current_week"]["success_rate"]
+        }
+    }
 
 if __name__ == "__main__":
     import uvicorn

@@ -1,0 +1,104 @@
+{
+  "info": {
+    "name": "Weekly Email Report API",
+    "description": "API endpoints for weekly transaction performance reports",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Get Weekly Performance Report",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{base_url}}/api/reports/weekly-performance?week_start_date=2026-01-13",
+          "host": ["{{base_url}}"],
+          "path": ["api", "reports", "weekly-performance"],
+          "query": [
+            {
+              "key": "week_start_date",
+              "value": "2026-01-13",
+              "description": "Week start date (YYYY-MM-DD, should be a Monday)"
+            }
+          ]
+        },
+        "description": "Get weekly transaction performance report data as JSON.\n\nReturns:\n- Current week metrics\n- Previous week metrics\n- Week-over-week changes\n- Top 5 currencies breakdown"
+      },
+      "response": []
+    },
+    {
+      "name": "Send Weekly Email Report",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"week_start_date\": \"2026-01-13\",\n  \"recipients\": [\n    \"finance@spennx.com\",\n    \"management@spennx.com\"\n  ]\n}"
+        },
+        "url": {
+          "raw": "{{base_url}}/api/reports/weekly-email",
+          "host": ["{{base_url}}"],
+          "path": ["api", "reports", "weekly-email"]
+        },
+        "description": "Generate and send weekly performance email report.\n\nNote: Email sending is disabled by default. To enable:\n1. Configure email credentials in .env\n2. Uncomment email sending code in app/main.py\n3. Restart server"
+      },
+      "response": []
+    },
+    {
+      "name": "Get Weekly Report - Last Week",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{base_url}}/api/reports/weekly-performance?week_start_date={{last_monday}}",
+          "host": ["{{base_url}}"],
+          "path": ["api", "reports", "weekly-performance"],
+          "query": [
+            {
+              "key": "week_start_date",
+              "value": "{{last_monday}}",
+              "description": "Dynamically calculated last Monday"
+            }
+          ]
+        },
+        "description": "Get report for last week using dynamic date calculation.\n\nSet {{last_monday}} variable in Postman environment or use Pre-request Script:\n\n```javascript\nconst now = new Date();\nconst dayOfWeek = now.getDay();\nconst daysToSubtract = dayOfWeek === 0 ? 6 : dayOfWeek - 1;\nconst lastMonday = new Date(now);\nlastMonday.setDate(now.getDate() - daysToSubtract - 7);\npm.environment.set('last_monday', lastMonday.toISOString().split('T')[0]);\n```"
+      },
+      "response": []
+    },
+    {
+      "name": "Send Email - Test Recipients",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"week_start_date\": \"2026-01-13\",\n  \"recipients\": [\n    \"test@example.com\"\n  ]\n}"
+        },
+        "url": {
+          "raw": "{{base_url}}/api/reports/weekly-email",
+          "host": ["{{base_url}}"],
+          "path": ["api", "reports", "weekly-email"]
+        },
+        "description": "Test email generation with a test recipient.\n\nUse this to verify:\n- Report data generation\n- Email template rendering\n- Response format\n\nBefore sending real emails."
+      },
+      "response": []
+    }
+  ],
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "http://localhost:8000",
+      "type": "string"
+    }
+  ]
+}

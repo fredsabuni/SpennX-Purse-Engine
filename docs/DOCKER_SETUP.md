@@ -31,7 +31,8 @@ This guide will help you run the SpennX Dashboard API using Docker.
 
 3. **Build and start the containers:**
    ```bash
-   docker-compose up -d
+   docker compose build
+   docker compose up -d
    ```
 
 4. **Check the logs:**

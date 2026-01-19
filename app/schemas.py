@@ -184,3 +184,53 @@ class TodayTransactionsSummary(BaseModel):
     total_volume_usd: str
     total_revenue_usd: str
     transactions: List[TodayTransactionItem]
+
+class WeeklyReportPeriod(BaseModel):
+    start_date: str
+    end_date: str
+    week_number: int
+
+class WeeklyReportCurrencyBreakdown(BaseModel):
+    currency: str
+    transaction_count: int
+    volume_usd: str
+    percentage: float
+
+class WeeklyReportWeekMetrics(BaseModel):
+    total_transactions: int
+    success_count: int
+    failed_count: int
+    pending_count: int
+    declined_count: int
+    reversed_count: int
+    processing_swap_count: int
+    other_count: int
+    success_percentage: float
+    failed_percentage: float
+    pending_percentage: float
+    declined_percentage: float
+    success_rate: float
+    total_volume_usd: str
+    avg_transaction_size_usd: str
+    total_revenue_usd: str
+    avg_fee_per_transaction_usd: str
+    fees_to_value_ratio: float
+    currency_breakdown: List[WeeklyReportCurrencyBreakdown]
+
+class WeeklyReportChanges(BaseModel):
+    transaction_volume_change_pct: float
+    transaction_volume_change_absolute: int
+    success_rate_change_pct: float
+    revenue_change_pct: float
+    revenue_change_absolute_usd: str
+    avg_transaction_size_change_pct: float
+
+class WeeklyPerformanceReport(BaseModel):
+    period: WeeklyReportPeriod
+    current_week: WeeklyReportWeekMetrics
+    previous_week: WeeklyReportWeekMetrics
+    week_over_week_changes: WeeklyReportChanges
+
+class SendWeeklyEmailRequest(BaseModel):
+    week_start_date: str  # YYYY-MM-DD format (Monday)
+    recipients: List[EmailStr]

@@ -1,0 +1,48 @@
+
+Weekly Transaction Performance Report - Jan 13 to Jan 19, 2026
+
+Dear Team,
+
+I am pleased to share our transaction performance for the week of Jan 13 to Jan 19, 2026.
+
+WEEKLY PERFORMANCE SNAPSHOT
+
+Transaction Volume:
+- Total Transactions: 1,234
+- Successful: 1,145 (92.8%)
+- Failed: 45 (3.6%)
+- Pending: 34 (2.8%)
+- Declined: 10 (0.8%)
+
+Transaction Value:
+- Total Volume: $567,890.50
+- Average Transaction: $460.15
+
+Revenue Performance:
+- Total Fees Collected: $1,234.56
+- Average Fee per Transaction: $1.00
+- Fees-to-Value Ratio: 0.22%
+
+CURRENCY DISTRIBUTION
+
+1. USD - 456 transactions, $234,567.00 (41.3%)
+2. NGN - 345 transactions, $123,456.00 (21.7%)
+3. EUR - 234 transactions, $98,765.00 (17.4%)
+4. KES - 123 transactions, $67,890.00 (12.0%)
+5. GBP - 76 transactions, $43,212.50 (7.6%)
+
+WEEK-OVER-WEEK COMPARISON
+
+- Transaction Volume: +5.2% (+61 transactions)
+- Success Rate: +0.8 percentage points
+- Revenue: +8.3% ($94.56)
+- Average Transaction Size: +2.1%
+
+Thank you for your continued dedication to maintaining our platform's reliability and performance.
+
+Best regards,
+Finance Team
+
+---
+SpennX Transaction Performance Report
+Generated on January 18, 2026 at 22:41 UTC
