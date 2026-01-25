@@ -5,8 +5,9 @@ from sqlalchemy import func, desc, and_, or_, cast, String
 from typing import List, Optional
 from decimal import Decimal
 from datetime import datetime, timedelta
+from contextlib import asynccontextmanager
 from app.database import get_db
-from app.models import Transaction
+from app.models import TransactionCache
 from app.schemas import (
     TransactionResponse, DashboardStats, RecipientData, 
     TransactionsLiveView, PeriodStats, TransactionPulse,
@@ -21,8 +22,31 @@ from app.currency_rates import convert_to_usd
 from app.formatters import format_currency, format_percentage
 from app.reports import generate_weekly_performance_report
 from app.email_service import generate_html_email, generate_plain_text_email, send_email
+from app.scheduler import get_scheduler
+import app.sync_routes as sync_routes
 
-app = FastAPI(title="SpennX Live Pulse Dashboard API", version="2.0")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """
+    Lifespan context manager for startup and shutdown events
+    """
+    # Startup: Start the transaction sync scheduler
+    scheduler = get_scheduler()
+    scheduler.start()
+    yield
+    # Shutdown: Stop the scheduler
+    scheduler.stop()
+
+
+app = FastAPI(
+    title="SpennX Live Pulse Dashboard API", 
+    version="2.0",
+    lifespan=lifespan
+)
+
+# Include the transaction sync routes
+app.include_router(sync_routes.router)
 
 app.add_middleware(
     CORSMiddleware,
@@ -40,15 +64,15 @@ def calculate_period_stats(db: Session, start: datetime, end: datetime, period_n
     Converts to USD using rate from recipient JSON or assumes USD if rate not available.
     """
     # Base query for all transactions in period
-    base_query = db.query(Transaction).filter(
+    base_query = db.query(TransactionCache).filter(
         and_(
-            Transaction.created_at >= start,
-            Transaction.created_at <= end
+            TransactionCache.created_at >= start,
+            TransactionCache.created_at <= end
         )
     )
     
     # Query for successful transactions only
-    success_query = base_query.filter(Transaction.status == "success")
+    success_query = base_query.filter(TransactionCache.status == "success")
     
     # Total transactions (all statuses)
     total_transactions = base_query.count()
@@ -85,9 +109,9 @@ def calculate_period_stats(db: Session, start: datetime, end: datetime, period_n
     # Error rate calculation (failed, declined, reversed)
     error_count = base_query.filter(
         or_(
-            Transaction.status == "failed",
-            Transaction.status == "declined",
-            Transaction.status == "reversed"
+            TransactionCache.status == "failed",
+            TransactionCache.status == "declined",
+            TransactionCache.status == "reversed"
         )
     ).count()
     error_rate = (error_count / total_transactions * 100) if total_transactions > 0 else 0.0
@@ -150,22 +174,22 @@ def get_transaction_pulse(db: Session = Depends(get_db)):
     
     # Last minute
     one_min_ago = now - timedelta(minutes=1)
-    txn_last_min = db.query(func.count(Transaction.id)).filter(
-        Transaction.created_at >= one_min_ago
+    txn_last_min = db.query(func.count(TransactionCache.id)).filter(
+        TransactionCache.created_at >= one_min_ago
     ).scalar()
     
     # Last hour
     one_hour_ago = now - timedelta(hours=1)
-    txn_last_hour = db.query(func.count(Transaction.id)).filter(
-        Transaction.created_at >= one_hour_ago
+    txn_last_hour = db.query(func.count(TransactionCache.id)).filter(
+        TransactionCache.created_at >= one_hour_ago
     ).scalar()
     
     # Today - calculate USD equivalent using rate from recipient JSON
     today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
-    today_base_query = db.query(Transaction).filter(Transaction.created_at >= today_start)
+    today_base_query = db.query(TransactionCache).filter(TransactionCache.created_at >= today_start)
     
     # Only count successful transactions for volume
-    today_success_query = today_base_query.filter(Transaction.status == "success")
+    today_success_query = today_base_query.filter(TransactionCache.status == "success")
     txn_today = today_success_query.count()
     
     # Calculate USD equivalent volume using proper conversion
@@ -189,36 +213,36 @@ def get_transaction_pulse(db: Session = Depends(get_db)):
     total_today = today_base_query.count()
     errors_today = today_base_query.filter(
         or_(
-            Transaction.status == "failed",
-            Transaction.status == "declined",
-            Transaction.status == "reversed"
+            TransactionCache.status == "failed",
+            TransactionCache.status == "declined",
+            TransactionCache.status == "reversed"
         )
     ).count()
     error_rate = (errors_today / total_today * 100) if total_today > 0 else 0.0
     
     # Active users (unique from_wallet or external_id)
-    active_today = db.query(func.count(func.distinct(Transaction.from_wallet))).filter(
-        Transaction.created_at >= today_start,
-        Transaction.from_wallet.isnot(None)
+    active_today = db.query(func.count(func.distinct(TransactionCache.from_wallet))).filter(
+        TransactionCache.created_at >= today_start,
+        TransactionCache.from_wallet.isnot(None)
     ).scalar()
     
     week_start = now - timedelta(days=now.weekday())
     week_start = week_start.replace(hour=0, minute=0, second=0, microsecond=0)
-    active_week = db.query(func.count(func.distinct(Transaction.from_wallet))).filter(
-        Transaction.created_at >= week_start,
-        Transaction.from_wallet.isnot(None)
+    active_week = db.query(func.count(func.distinct(TransactionCache.from_wallet))).filter(
+        TransactionCache.created_at >= week_start,
+        TransactionCache.from_wallet.isnot(None)
     ).scalar()
     
     month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-    active_month = db.query(func.count(func.distinct(Transaction.from_wallet))).filter(
-        Transaction.created_at >= month_start,
-        Transaction.from_wallet.isnot(None)
+    active_month = db.query(func.count(func.distinct(TransactionCache.from_wallet))).filter(
+        TransactionCache.created_at >= month_start,
+        TransactionCache.from_wallet.isnot(None)
     ).scalar()
     
     # New users today (simplified - count unique wallets created today)
-    new_users = db.query(func.count(func.distinct(Transaction.from_wallet))).filter(
-        Transaction.created_at >= today_start,
-        Transaction.from_wallet.isnot(None)
+    new_users = db.query(func.count(func.distinct(TransactionCache.from_wallet))).filter(
+        TransactionCache.created_at >= today_start,
+        TransactionCache.from_wallet.isnot(None)
     ).scalar()
     
     return TransactionPulse(
@@ -244,22 +268,22 @@ def get_net_income_stats(db: Session = Depends(get_db)):
     
     # Income per minute (success only)
     one_min_ago = now - timedelta(minutes=1)
-    income_min = db.query(func.sum(Transaction.human_readable_charge)).filter(
-        Transaction.created_at >= one_min_ago,
-        Transaction.status == "success"
+    income_min = db.query(func.sum(TransactionCache.human_readable_charge)).filter(
+        TransactionCache.created_at >= one_min_ago,
+        TransactionCache.status == "success"
     ).scalar() or Decimal(0)
     
     # Income per hour (success only)
     one_hour_ago = now - timedelta(hours=1)
-    income_hour = db.query(func.sum(Transaction.human_readable_charge)).filter(
-        Transaction.created_at >= one_hour_ago,
-        Transaction.status == "success"
+    income_hour = db.query(func.sum(TransactionCache.human_readable_charge)).filter(
+        TransactionCache.created_at >= one_hour_ago,
+        TransactionCache.status == "success"
     ).scalar() or Decimal(0)
     
     # Income per day (success only) - convert to USD
     today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
-    today_base_query = db.query(Transaction).filter(Transaction.created_at >= today_start)
-    today_success_query = today_base_query.filter(Transaction.status == "success")
+    today_base_query = db.query(TransactionCache).filter(TransactionCache.created_at >= today_start)
+    today_success_query = today_base_query.filter(TransactionCache.status == "success")
     
     # Calculate USD equivalent income and volume using proper conversion
     income_day_usd = Decimal(0)
@@ -287,22 +311,22 @@ def get_net_income_stats(db: Session = Depends(get_db)):
     total_today = today_base_query.count()
     errors_today = today_base_query.filter(
         or_(
-            Transaction.status == "failed",
-            Transaction.status == "declined",
-            Transaction.status == "reversed"
+            TransactionCache.status == "failed",
+            TransactionCache.status == "declined",
+            TransactionCache.status == "reversed"
         )
     ).count()
     error_rate = (errors_today / total_today * 100) if total_today > 0 else 0.0
     
     # Top 5 countries by volume (from recipient JSON) - using human_readable_amount (success only)
     top_countries_raw = db.query(
-        cast(Transaction.recipient['country'], String).label('country'),
-        func.sum(Transaction.human_readable_amount).label('volume'),
-        func.count(Transaction.id).label('count')
+        cast(TransactionCache.recipient['country'], String).label('country'),
+        func.sum(TransactionCache.human_readable_amount).label('volume'),
+        func.count(TransactionCache.id).label('count')
     ).filter(
-        Transaction.created_at >= today_start,
-        Transaction.status == "success",
-        Transaction.recipient['country'].isnot(None)
+        TransactionCache.created_at >= today_start,
+        TransactionCache.status == "success",
+        TransactionCache.recipient['country'].isnot(None)
     ).group_by('country').order_by(desc('volume')).limit(5).all()
     
     top_countries = [
@@ -317,13 +341,13 @@ def get_net_income_stats(db: Session = Depends(get_db)):
     
     # Top 5 currencies by volume - using human_readable_amount for accurate totals (success only)
     top_currencies_raw = db.query(
-        Transaction.currency,
-        func.sum(Transaction.human_readable_amount).label('volume'),
-        func.count(Transaction.id).label('count')
+        TransactionCache.currency,
+        func.sum(TransactionCache.human_readable_amount).label('volume'),
+        func.count(TransactionCache.id).label('count')
     ).filter(
-        Transaction.created_at >= today_start,
-        Transaction.status == "success"
-    ).group_by(Transaction.currency).order_by(desc('volume')).limit(5).all()
+        TransactionCache.created_at >= today_start,
+        TransactionCache.status == "success"
+    ).group_by(TransactionCache.currency).order_by(desc('volume')).limit(5).all()
     
     top_currencies = [
         CountryCurrencyVolume(
@@ -337,9 +361,9 @@ def get_net_income_stats(db: Session = Depends(get_db)):
     
     # YTD accumulated revenue (success only)
     ytd_start = now.replace(month=1, day=1, hour=0, minute=0, second=0, microsecond=0)
-    ytd_revenue = db.query(func.sum(Transaction.human_readable_charge)).filter(
-        Transaction.created_at >= ytd_start,
-        Transaction.status == "success"
+    ytd_revenue = db.query(func.sum(TransactionCache.human_readable_charge)).filter(
+        TransactionCache.created_at >= ytd_start,
+        TransactionCache.status == "success"
     ).scalar() or Decimal(0)
     
     return NetIncomeStats(
@@ -362,7 +386,7 @@ def get_dashboard_stats(db: Session = Depends(get_db)):
     Only counts successful transactions for volume calculations.
     """
     # Get all successful transactions
-    success_query = db.query(Transaction).filter(Transaction.status == "success")
+    success_query = db.query(TransactionCache).filter(TransactionCache.status == "success")
     total_transactions = success_query.count()
     
     # Calculate USD equivalent volume using proper conversion
@@ -381,13 +405,13 @@ def get_dashboard_stats(db: Session = Depends(get_db)):
         total_volume_usd += convert_to_usd(amount, currency, rate_from_json)
     
     # Status counts
-    pending_count = db.query(func.count(Transaction.id)).filter(Transaction.status == "pending").scalar()
-    completed_count = db.query(func.count(Transaction.id)).filter(Transaction.status == "success").scalar()
-    failed_count = db.query(func.count(Transaction.id)).filter(
+    pending_count = db.query(func.count(TransactionCache.id)).filter(TransactionCache.status == "pending").scalar()
+    completed_count = db.query(func.count(TransactionCache.id)).filter(TransactionCache.status == "success").scalar()
+    failed_count = db.query(func.count(TransactionCache.id)).filter(
         or_(
-            Transaction.status == "failed",
-            Transaction.status == "declined",
-            Transaction.status == "reversed"
+            TransactionCache.status == "failed",
+            TransactionCache.status == "declined",
+            TransactionCache.status == "reversed"
         )
     ).scalar()
     
@@ -425,24 +449,24 @@ def get_transactions(
     - YYYY-MM-DD (e.g., 2024-01-15)
     - YYYY-MM-DD HH:MM:SS (e.g., 2024-01-15 14:30:00)
     """
-    query = db.query(Transaction)
+    query = db.query(TransactionCache)
     
     if status:
-        query = query.filter(Transaction.status == status)
+        query = query.filter(TransactionCache.status == status)
     
     # Custom date range takes priority over interval
     if start_date or end_date:
         try:
             if start_date:
                 start_dt = parse_datetime(start_date)
-                query = query.filter(Transaction.created_at >= start_dt)
+                query = query.filter(TransactionCache.created_at >= start_dt)
             
             if end_date:
                 end_dt = parse_datetime(end_date)
                 # If only date provided, set to end of day
                 if end_dt.hour == 0 and end_dt.minute == 0 and end_dt.second == 0:
                     end_dt = end_dt.replace(hour=23, minute=59, second=59)
-                query = query.filter(Transaction.created_at <= end_dt)
+                query = query.filter(TransactionCache.created_at <= end_dt)
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
     elif interval:
@@ -450,12 +474,12 @@ def get_transactions(
         start, end = get_date_range(interval.value)
         query = query.filter(
             and_(
-                Transaction.created_at >= start,
-                Transaction.created_at <= end
+                TransactionCache.created_at >= start,
+                TransactionCache.created_at <= end
             )
         )
     
-    transactions = query.order_by(desc(Transaction.created_at)).offset(skip).limit(limit).all()
+    transactions = query.order_by(desc(TransactionCache.created_at)).offset(skip).limit(limit).all()
     
     return [
         TransactionResponse(
@@ -500,16 +524,16 @@ def get_today_transactions(
     today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
     
     # Base query for today
-    base_query = db.query(Transaction).filter(
-        Transaction.created_at >= today_start
+    base_query = db.query(TransactionCache).filter(
+        TransactionCache.created_at >= today_start
     )
     
     # Apply status filter if provided
     if status:
-        base_query = base_query.filter(Transaction.status == status)
+        base_query = base_query.filter(TransactionCache.status == status)
     
     # Get transactions ordered by most recent first
-    transactions = base_query.order_by(desc(Transaction.created_at)).limit(limit).all()
+    transactions = base_query.order_by(desc(TransactionCache.created_at)).limit(limit).all()
     
     # Calculate summary stats
     total_count = 0
@@ -595,7 +619,7 @@ def get_today_transactions(
 @app.get("/api/transactions/{transaction_id}", response_model=TransactionResponse)
 def get_transaction(transaction_id: str, db: Session = Depends(get_db)):
     """Get a specific transaction by ID"""
-    transaction = db.query(Transaction).filter(Transaction.id == transaction_id).first()
+    transaction = db.query(TransactionCache).filter(TransactionCache.id == transaction_id).first()
     
     if not transaction:
         raise HTTPException(status_code=404, detail="Transaction not found")
@@ -678,20 +702,20 @@ def get_status_breakdown(
     - Predefined interval (today, current_week, etc.)
     - If no filter provided, returns all-time data
     """
-    query = db.query(Transaction)
+    query = db.query(TransactionCache)
     
     # Apply date filters
     if start_date or end_date:
         try:
             if start_date:
                 start_dt = parse_datetime(start_date)
-                query = query.filter(Transaction.created_at >= start_dt)
+                query = query.filter(TransactionCache.created_at >= start_dt)
             
             if end_date:
                 end_dt = parse_datetime(end_date)
                 if end_dt.hour == 0 and end_dt.minute == 0 and end_dt.second == 0:
                     end_dt = end_dt.replace(hour=23, minute=59, second=59)
-                query = query.filter(Transaction.created_at <= end_dt)
+                query = query.filter(TransactionCache.created_at <= end_dt)
         except ValueError as e:
             raise HTTPException(
                 status_code=400,
@@ -701,8 +725,8 @@ def get_status_breakdown(
         start, end = get_date_range(interval.value)
         query = query.filter(
             and_(
-                Transaction.created_at >= start,
-                Transaction.created_at <= end
+                TransactionCache.created_at >= start,
+                TransactionCache.created_at <= end
             )
         )
     
@@ -711,11 +735,11 @@ def get_status_breakdown(
     
     # Get count by status
     status_counts = db.query(
-        Transaction.status,
-        func.count(Transaction.id).label('count')
+        TransactionCache.status,
+        func.count(TransactionCache.id).label('count')
     ).filter(
-        Transaction.id.in_(query.with_entities(Transaction.id))
-    ).group_by(Transaction.status).all()
+        TransactionCache.id.in_(query.with_entities(TransactionCache.id))
+    ).group_by(TransactionCache.status).all()
     
     # Build status breakdown
     statuses = {}
@@ -764,26 +788,26 @@ def get_currency_breakdown(
     - Line charts showing currency trends over time
     - Currency distribution analysis
     """
-    query = db.query(Transaction)
+    query = db.query(TransactionCache)
     
     # Default to success status only
     if status:
-        query = query.filter(Transaction.status == status)
+        query = query.filter(TransactionCache.status == status)
     else:
-        query = query.filter(Transaction.status == "success")
+        query = query.filter(TransactionCache.status == "success")
     
     # Apply date filters
     if start_date or end_date:
         try:
             if start_date:
                 start_dt = parse_datetime(start_date)
-                query = query.filter(Transaction.created_at >= start_dt)
+                query = query.filter(TransactionCache.created_at >= start_dt)
             
             if end_date:
                 end_dt = parse_datetime(end_date)
                 if end_dt.hour == 0 and end_dt.minute == 0 and end_dt.second == 0:
                     end_dt = end_dt.replace(hour=23, minute=59, second=59)
-                query = query.filter(Transaction.created_at <= end_dt)
+                query = query.filter(TransactionCache.created_at <= end_dt)
         except ValueError as e:
             raise HTTPException(
                 status_code=400,
@@ -793,8 +817,8 @@ def get_currency_breakdown(
         start, end = get_date_range(interval.value)
         query = query.filter(
             and_(
-                Transaction.created_at >= start,
-                Transaction.created_at <= end
+                TransactionCache.created_at >= start,
+                TransactionCache.created_at <= end
             )
         )
     
@@ -874,20 +898,20 @@ def get_transaction_overview(
     - Dashboard summary cards
     - Executive reports
     """
-    query = db.query(Transaction)
+    query = db.query(TransactionCache)
     
     # Apply date filters
     if start_date or end_date:
         try:
             if start_date:
                 start_dt = parse_datetime(start_date)
-                query = query.filter(Transaction.created_at >= start_dt)
+                query = query.filter(TransactionCache.created_at >= start_dt)
             
             if end_date:
                 end_dt = parse_datetime(end_date)
                 if end_dt.hour == 0 and end_dt.minute == 0 and end_dt.second == 0:
                     end_dt = end_dt.replace(hour=23, minute=59, second=59)
-                query = query.filter(Transaction.created_at <= end_dt)
+                query = query.filter(TransactionCache.created_at <= end_dt)
         except ValueError as e:
             raise HTTPException(
                 status_code=400,
@@ -897,8 +921,8 @@ def get_transaction_overview(
         start, end = get_date_range(interval.value)
         query = query.filter(
             and_(
-                Transaction.created_at >= start,
-                Transaction.created_at <= end
+                TransactionCache.created_at >= start,
+                TransactionCache.created_at <= end
             )
         )
     
@@ -988,24 +1012,24 @@ def get_transactions_by_status(
     - YYYY-MM-DD (e.g., 2024-01-15)
     - YYYY-MM-DD HH:MM:SS (e.g., 2024-01-15 14:30:00)
     """
-    query = db.query(Transaction).filter(Transaction.status == status)
+    query = db.query(TransactionCache).filter(TransactionCache.status == status)
     
     # Apply date filters if provided
     if start_date or end_date:
         try:
             if start_date:
                 start_dt = parse_datetime(start_date)
-                query = query.filter(Transaction.created_at >= start_dt)
+                query = query.filter(TransactionCache.created_at >= start_dt)
             
             if end_date:
                 end_dt = parse_datetime(end_date)
                 if end_dt.hour == 0 and end_dt.minute == 0 and end_dt.second == 0:
                     end_dt = end_dt.replace(hour=23, minute=59, second=59)
-                query = query.filter(Transaction.created_at <= end_dt)
+                query = query.filter(TransactionCache.created_at <= end_dt)
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
     
-    transactions = query.order_by(desc(Transaction.created_at)).offset(skip).limit(limit).all()
+    transactions = query.order_by(desc(TransactionCache.created_at)).offset(skip).limit(limit).all()
     
     return [
         TransactionResponse(
@@ -1086,32 +1110,32 @@ def get_daily_transaction_trend(
     from sqlalchemy import case
     
     daily_counts = db.query(
-        func.date(Transaction.created_at).label('date'),
-        Transaction.status,
-        func.count(Transaction.id).label('count')
+        func.date(TransactionCache.created_at).label('date'),
+        TransactionCache.status,
+        func.count(TransactionCache.id).label('count')
     ).filter(
         and_(
-            Transaction.created_at >= start_dt,
-            Transaction.created_at <= end_dt
+            TransactionCache.created_at >= start_dt,
+            TransactionCache.created_at <= end_dt
         )
     ).group_by(
-        func.date(Transaction.created_at),
-        Transaction.status
+        func.date(TransactionCache.created_at),
+        TransactionCache.status
     ).all()
     
     # For successful transactions, we need to fetch and convert to USD
     # Only fetch successful transactions to minimize data transfer
     success_transactions = db.query(
-        func.date(Transaction.created_at).label('date'),
-        Transaction.human_readable_amount,
-        Transaction.human_readable_charge,
-        Transaction.currency,
-        Transaction.recipient
+        func.date(TransactionCache.created_at).label('date'),
+        TransactionCache.human_readable_amount,
+        TransactionCache.human_readable_charge,
+        TransactionCache.currency,
+        TransactionCache.recipient
     ).filter(
         and_(
-            Transaction.created_at >= start_dt,
-            Transaction.created_at <= end_dt,
-            Transaction.status == "success"
+            TransactionCache.created_at >= start_dt,
+            TransactionCache.created_at <= end_dt,
+            TransactionCache.status == "success"
         )
     ).all()
     

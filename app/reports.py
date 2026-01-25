@@ -9,7 +9,7 @@ from sqlalchemy import func, or_, and_
 from datetime import datetime, timedelta
 from decimal import Decimal
 from typing import Dict, List, Any
-from app.models import Transaction
+from app.models import TransactionCache
 from app.currency_rates import convert_to_usd
 from app.formatters import format_currency, format_percentage
 
