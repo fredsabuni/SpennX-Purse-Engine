@@ -35,7 +35,9 @@ python -m uvicorn app.main:app --reload
 
 Or with Docker:
 ```bash
-docker-compose up
+docker compose up -d --build
+docker compose logs -f
+docker compose down
 ```
 
 ## API Endpoints

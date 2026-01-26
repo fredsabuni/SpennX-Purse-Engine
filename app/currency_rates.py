@@ -17,6 +17,7 @@ CURRENCY_RATES: Dict[str, Decimal] = {
     "AED": Decimal("3.6725"),
     "PHP": Decimal("59.44767954"),
     "CAD": Decimal("1.3452372791339"),
+    "XAF": Decimal("571.1219951195"),
 }
 
 def get_usd_rate(currency_code: str) -> Decimal:
@@ -49,7 +50,7 @@ def convert_to_usd(amount: Decimal, currency_code: str, rate_from_json: Decimal 
     Convert an amount to USD.
     
     Priority:
-    1. Use rate from recipient JSON if available
+    1. Use rate from recipient JSON if available (sanity checked against known rates)
     2. Use predefined rates from CURRENCY_RATES
     3. Assume 1:1 if currency not found
     
@@ -64,14 +65,47 @@ def convert_to_usd(amount: Decimal, currency_code: str, rate_from_json: Decimal 
     if not amount:
         return Decimal("0")
     
-    # If rate provided in JSON, use it
+    currency_code = currency_code.upper() if currency_code else "USD"
+    
+    # If using matching currency (USD to USD), result is amount
+    if currency_code == "USD":
+        return amount
+
+    # Determine if we should trust the JSON rate
+    use_json_rate = False
+    
     if rate_from_json and rate_from_json > 0:
+        # If we know the currency, sanity check the JSON rate
+        if currency_code in CURRENCY_RATES:
+            known_rate = CURRENCY_RATES[currency_code] # 1 USD = X Currency
+            
+            # Check if JSON rate matches "1 USD = X Currency" format (e.g. 571 for XAF)
+            # Allow 50% deviation to account for market savings/fluctuations
+            if abs(rate_from_json - known_rate) < (known_rate * Decimal("0.5")):
+                use_json_rate = True
+                
+            # Check if JSON rate matches "1 Currency = Y USD" format (e.g. 0.0017 for XAF)
+            elif abs((Decimal("1.0")/rate_from_json) - known_rate) < (known_rate * Decimal("0.5")):
+                use_json_rate = True
+                
+            # If it matches neither (like the 2.515 case aka 7545 USD error), ignore it
+            # and fall back to known rates
+        else:
+            # If currency unknown, we have to trust the JSON rate
+            use_json_rate = True
+
+    if use_json_rate:
         # Check if the JSON rate is "currency to USD" or "USD to currency"
-        # If it's a large number (>10), it's likely "1 USD = X currency"
+        # If it's a large number (>10), it's likely "1 USD = X currency" (except for Japanese Yen etc, but generic rule)
+        # Better heuristic: Compare with 1.0. 
+        # Most african/global currencies designated here are > 1 per USD (NGN, XAF, KES)
+        # Currencies < 1 per USD are GBP, EUR, KWD.
+        
         if rate_from_json > 10:
+             # Assume 1 USD = rate * Currency -> USD = Amount / rate
             return amount / rate_from_json
         else:
-            # It's likely already "currency to USD"
+            # Assume 1 Currency = rate * USD -> USD = Amount * rate
             return amount * rate_from_json
     
     # Otherwise use our predefined rates
