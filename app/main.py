@@ -24,7 +24,17 @@ from app.reports import generate_weekly_performance_report
 from app.email_service import generate_html_email, generate_plain_text_email, send_email
 from app.scheduler import get_scheduler
 import app.sync_routes as sync_routes
+import logging
+import sys
 
+# Configure logging to ensure INFO logs are visible
+# We explicitly set this up because sometimes Uvicorn configuration might filter out app logs
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    handlers=[logging.StreamHandler(sys.stdout)]
+)
+logging.getLogger("app").setLevel(logging.INFO)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):

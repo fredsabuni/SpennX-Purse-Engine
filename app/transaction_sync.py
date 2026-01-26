@@ -7,6 +7,7 @@ to the local cache database. It supports both full syncs and daily incremental s
 
 import httpx
 import logging
+import asyncio
 from datetime import datetime, date
 from typing import Dict, List, Optional, Any
 from sqlalchemy.orm import Session
@@ -65,12 +66,60 @@ class TransactionSyncService:
                 logger.error(f"Unexpected error fetching transactions: {e}")
                 raise
     
-    async def fetch_all_pages(self, day: Optional[str] = None) -> List[Dict]:
+    async def _process_sync_loop(self, db: Session, day: Optional[str] = None, delay_seconds: float = 0.5) -> Dict[str, Any]:
+        """
+        Internal method to fetch pages and sync to DB iteratively
+        """
+        start_time = datetime.now()
+        total_inserted = 0
+        total_updated = 0
+        total_fetched = 0
+        current_page = 1
+        
+        logger.info(f"Starting sync loop for day={day or 'all'}...")
+        
+        while True:
+            logger.info(f"Fetching page {current_page} for day={day or 'all'}")
+            response = await self.fetch_transactions(day=day, page=current_page)
+            
+            transactions = response.get("data", [])
+            page_count = len(transactions)
+            total_fetched += page_count
+            
+            # Sync this page immediately to DB
+            if transactions:
+                stats = self.sync_to_database(transactions, db)
+                total_inserted += stats["inserted"]
+                total_updated += stats["updated"]
+                logger.info(f"Synced page {current_page}: {stats['inserted']} new, {stats['updated']} updated")
+            
+            # Check if there are more pages
+            meta = response.get("meta", {})
+            current_page = meta.get("current_page", current_page)
+            last_page = meta.get("last_page", current_page)
+            
+            if current_page >= last_page:
+                break
+            
+            current_page += 1
+            
+            # Add delay to avoid stressing the server
+            if delay_seconds > 0:
+                await asyncio.sleep(delay_seconds)
+        
+        return {
+            "inserted": total_inserted,
+            "updated": total_updated,
+            "total": total_fetched
+        }
+
+    async def fetch_all_pages(self, day: Optional[str] = None, delay_seconds: float = 0.5) -> List[Dict]:
         """
         Fetch all pages of transactions
         
         Args:
             day: Optional date filter in format YYYY-MM-DD
+            delay_seconds: Delay between requests to avoid rate limiting (default: 0.5s)
             
         Returns:
             List of all transaction records
@@ -96,6 +145,10 @@ class TransactionSyncService:
                 break
             
             current_page += 1
+            
+            # Add delay to avoid stressing the server
+            if delay_seconds > 0:
+                await asyncio.sleep(delay_seconds)
         
         logger.info(f"Total transactions fetched: {len(all_transactions)}")
         return all_transactions
@@ -200,8 +253,8 @@ class TransactionSyncService:
         logger.info("Starting full transaction sync...")
         start_time = datetime.now()
         
-        transactions = await self.fetch_all_pages()
-        sync_stats = self.sync_to_database(transactions, db)
+        # Use the iterative sync loop instead of fetching all at once
+        sync_stats = await self._process_sync_loop(db, day=None)
         
         elapsed = (datetime.now() - start_time).total_seconds()
         
@@ -235,8 +288,8 @@ class TransactionSyncService:
         logger.info(f"Starting daily transaction sync for {day_str}...")
         start_time = datetime.now()
         
-        transactions = await self.fetch_all_pages(day=day_str)
-        sync_stats = self.sync_to_database(transactions, db)
+        # Use the iterative sync loop
+        sync_stats = await self._process_sync_loop(db, day=day_str)
         
         elapsed = (datetime.now() - start_time).total_seconds()
         

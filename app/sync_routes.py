@@ -8,13 +8,15 @@ from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from sqlalchemy.orm import Session
 from typing import Optional
 from datetime import date, datetime
+import logging
 from pydantic import BaseModel, Field
 
-from app.database import get_db
+from app.database import get_db, SessionLocal
 from app.transaction_sync import get_sync_service
 from app.scheduler import get_scheduler
 
 router = APIRouter(prefix="/api/sync", tags=["Transaction Sync"])
+logger = logging.getLogger(__name__)
 
 
 class SyncResponse(BaseModel):
@@ -37,33 +39,39 @@ class SchedulerStatus(BaseModel):
     jobs: list[dict]
 
 
+async def run_full_sync_background():
+    """Background task to run full sync"""
+    db = SessionLocal()
+    try:
+        logger.info("Background task: Starting full sync")
+        sync_service = get_sync_service()
+        await sync_service.full_sync(db)
+        logger.info("Background task: Full sync finished")
+    except Exception as e:
+        logger.error(f"Background task: Full sync failed: {e}")
+    finally:
+        db.close()
+
+
 @router.post("/full", response_model=SyncResponse)
 async def trigger_full_sync(
-    background_tasks: BackgroundTasks,
-    db: Session = Depends(get_db)
+    background_tasks: BackgroundTasks
 ):
     """
-    Trigger a full sync of all transactions from the external API.
+    Trigger a full sync of all transactions from the external API in the background.
     
     This will fetch all pages of transactions and sync them to the cache database.
-    Use this endpoint for initial setup or when you need to refresh all cached data.
-    
-    **Note:** This operation may take some time depending on the number of transactions.
+    The process runs in the background to prevent timeouts.
+    Check server logs for real-time progress.
     """
-    try:
-        sync_service = get_sync_service()
-        result = await sync_service.full_sync(db)
-        
-        return SyncResponse(
-            success=True,
-            message="Full sync completed successfully",
-            **result
-        )
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Full sync failed: {str(e)}"
-        )
+    background_tasks.add_task(run_full_sync_background)
+    
+    return SyncResponse(
+        success=True,
+        message="Full sync started in background. Check server logs for progress.",
+        sync_type="full",
+        started_at=datetime.now().isoformat()
+    )
 
 
 @router.post("/daily", response_model=SyncResponse)
