@@ -885,11 +885,168 @@ def get_currency_breakdown(
     
     return result
 
+@app.get("/api/analytics/top-currencies", response_model=List[CurrencyVolumeBreakdown])
+def get_top_currencies(
+    start_date: Optional[str] = Query(None, description="Start date (YYYY-MM-DD or YYYY-MM-DD HH:MM:SS)"),
+    end_date: Optional[str] = Query(None, description="End date (YYYY-MM-DD or YYYY-MM-DD HH:MM:SS)"),
+    interval: Optional[TimeInterval] = None,
+    period: Optional[str] = Query(None, description="Time period filter: today, yesterday, week, month, ytd, all"),
+    status: Optional[str] = Query(None, description="Filter by status (default: success only)"),
+    db: Session = Depends(get_db)
+):
+    """
+    Get top 5 performing currencies by volume for Finance team analysis.
+    
+    Returns for each currency (Top 5):
+    - Currency code
+    - Transaction count
+    - Total volume in original currency
+    - Total volume in USD (for comparison)
+    - Percentage share of total volume
+    
+    Features:
+    - Shows volume in their own currencies AND converted to USD for comparison
+    - Displays % share of each currency
+    - By default, only includes successful transactions
+    - Filters: today, yesterday, week, month, ytd, all
+    
+    Perfect for Finance team to:
+    - Track top performing currencies
+    - Compare currency volumes in USD equivalent
+    - Analyze currency distribution trends
+    - Monitor currency performance over different periods
+    
+    Filters:
+    - period: Quick period filter (today, yesterday, week, month, ytd, all)
+    - Custom date range (start_date & end_date)
+    - Predefined interval (interval parameter)
+    - status: Filter by transaction status (default: success only)
+    """
+    query = db.query(TransactionCache)
+    
+    # Default to success status only
+    if status:
+        query = query.filter(TransactionCache.status == status)
+    else:
+        query = query.filter(TransactionCache.status == "success")
+    
+    # Handle period filter first
+    period_start_dt = None
+    period_end_dt = None
+    
+    if period:
+        if period.lower() == "all":
+            # No date filter for 'all'
+            pass
+        else:
+            period_map = {
+                "today": "today",
+                "yesterday": "previous_day",
+                "week": "current_week",
+                "month": "current_month",
+                "ytd": "year_to_date"
+            }
+            if period.lower() in period_map:
+                period_start_dt, period_end_dt = get_date_range(period_map[period.lower()])
+            else:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Invalid period: {period}. Valid options: today, yesterday, week, month, ytd, all"
+                )
+    
+    # Apply date filters - custom dates take priority over period filter
+    if start_date or end_date:
+        try:
+            if start_date:
+                start_dt = parse_datetime(start_date)
+                query = query.filter(TransactionCache.created_at >= start_dt)
+            
+            if end_date:
+                end_dt = parse_datetime(end_date)
+                if end_dt.hour == 0 and end_dt.minute == 0 and end_dt.second == 0:
+                    end_dt = end_dt.replace(hour=23, minute=59, second=59)
+                query = query.filter(TransactionCache.created_at <= end_dt)
+        except ValueError as e:
+            raise HTTPException(
+                status_code=400,
+                detail=str(e)
+            )
+    elif period_start_dt and period_end_dt:
+        # Apply period filter if no custom dates provided
+        query = query.filter(
+            and_(
+                TransactionCache.created_at >= period_start_dt,
+                TransactionCache.created_at <= period_end_dt
+            )
+        )
+    elif interval:
+        start, end = get_date_range(interval.value)
+        query = query.filter(
+            and_(
+                TransactionCache.created_at >= start,
+                TransactionCache.created_at <= end
+            )
+        )
+    
+    # Get all transactions for this query
+    transactions = query.all()
+    
+    # Calculate totals by currency
+    currency_data = {}
+    total_volume_usd_all = Decimal(0)
+    
+    for txn in transactions:
+        currency = txn.currency or "USD"
+        amount = txn.human_readable_amount or Decimal(0)
+        
+        # Convert to USD
+        rate_from_json = None
+        if txn.recipient and isinstance(txn.recipient, dict) and 'rate' in txn.recipient:
+            try:
+                rate_from_json = Decimal(str(txn.recipient['rate'])) if txn.recipient['rate'] else None
+            except:
+                rate_from_json = None
+        
+        amount_usd = convert_to_usd(amount, currency, rate_from_json)
+        total_volume_usd_all += amount_usd
+        
+        if currency not in currency_data:
+            currency_data[currency] = {
+                "count": 0,
+                "total_volume": Decimal(0),
+                "total_volume_usd": Decimal(0)
+            }
+        
+        currency_data[currency]["count"] += 1
+        currency_data[currency]["total_volume"] += amount
+        currency_data[currency]["total_volume_usd"] += amount_usd
+    
+    # Build response - Top 5 only
+    result = []
+    for currency, data in currency_data.items():
+        avg_transaction = data["total_volume"] / data["count"] if data["count"] > 0 else Decimal(0)
+        percentage = (data["total_volume_usd"] / total_volume_usd_all * 100) if total_volume_usd_all > 0 else 0
+        
+        result.append(CurrencyVolumeBreakdown(
+            currency=currency,
+            transaction_count=data["count"],
+            total_volume=format_currency(data["total_volume"]),
+            total_volume_usd=format_currency(data["total_volume_usd"]),
+            avg_transaction_size=format_currency(avg_transaction),
+            percentage_of_total=format_percentage(percentage)
+        ))
+    
+    # Sort by USD volume (descending) and take top 5
+    result.sort(key=lambda x: float(x.total_volume_usd.replace('$', '').replace(',', '')), reverse=True)
+    
+    return result[:5]  # Return only top 5
+
 @app.get("/api/analytics/transaction-overview", response_model=TransactionOverview)
 def get_transaction_overview(
     start_date: Optional[str] = Query(None, description="Start date (YYYY-MM-DD or YYYY-MM-DD HH:MM:SS)"),
     end_date: Optional[str] = Query(None, description="End date (YYYY-MM-DD or YYYY-MM-DD HH:MM:SS)"),
     interval: Optional[TimeInterval] = None,
+    period: Optional[str] = Query(None, description="Time period filter: today, yesterday, week, month, ytd, all"),
     db: Session = Depends(get_db)
 ):
     """
@@ -907,10 +1064,39 @@ def get_transaction_overview(
     - Overview tables showing all transaction metrics
     - Dashboard summary cards
     - Executive reports
+    
+    Filters:
+    - Custom date range (start_date & end_date)
+    - Predefined interval (interval parameter)
+    - Quick period filter (period: today, yesterday, week, month, ytd, all)
     """
     query = db.query(TransactionCache)
     
-    # Apply date filters
+    # Handle period filter first
+    period_start_dt = None
+    period_end_dt = None
+    
+    if period:
+        if period.lower() == "all":
+            # No date filter for 'all'
+            pass
+        else:
+            period_map = {
+                "today": "today",
+                "yesterday": "previous_day",
+                "week": "current_week",
+                "month": "current_month",
+                "ytd": "year_to_date"
+            }
+            if period.lower() in period_map:
+                period_start_dt, period_end_dt = get_date_range(period_map[period.lower()])
+            else:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Invalid period: {period}. Valid options: today, yesterday, week, month, ytd, all"
+                )
+    
+    # Apply date filters - custom dates take priority over period filter
     if start_date or end_date:
         try:
             if start_date:
@@ -927,6 +1113,14 @@ def get_transaction_overview(
                 status_code=400,
                 detail=str(e)
             )
+    elif period_start_dt and period_end_dt:
+        # Apply period filter if no custom dates provided
+        query = query.filter(
+            and_(
+                TransactionCache.created_at >= period_start_dt,
+                TransactionCache.created_at <= period_end_dt
+            )
+        )
     elif interval:
         start, end = get_date_range(interval.value)
         query = query.filter(
