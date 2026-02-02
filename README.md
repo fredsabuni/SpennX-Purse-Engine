@@ -41,7 +41,9 @@ docker compose down
 ```
 
 #Check when Daily Transactions call has worked..
-docker logs 701d5b666388 2>&1 | grep "Starting scheduled daily transaction sync"
+docker logs 0eb6bf4491f1 2>&1 \
+| grep "Starting scheduled daily transaction sync" \
+| tail -n 25
 
 ## API Endpoints
 

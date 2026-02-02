@@ -44,10 +44,10 @@ def calculate_week_metrics(db: Session, start: datetime, end: datetime) -> Dict[
         Dictionary containing all week metrics
     """
     # Base query for the week
-    base_query = db.query(Transaction).filter(
+    base_query = db.query(TransactionCache).filter(
         and_(
-            Transaction.created_at >= start,
-            Transaction.created_at <= end
+            TransactionCache.created_at >= start,
+            TransactionCache.created_at <= end
         )
     )
     
